@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 """Automatically installs Arch Linux"""
 
 from argparse import ArgumentParser, Namespace
