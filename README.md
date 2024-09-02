@@ -4,7 +4,7 @@ Automatically installs Arch Linux on a device.
 
 ## Usage
 
-Open a shell in an existing Arch Linux installation (or live ISO). This system must already have Python and Python-Colorama installed.
+Open a shell in an existing Arch Linux installation (or live ISO).
 
 As root, execute the "auto_arch.py" script with Python.
 
@@ -14,7 +14,7 @@ python auto_arch.py
 
 ## TODO
 
-- [ ] Remove Python-Colorama or make it optional
+- [X] Remove Python-Colorama or make it optional
 - [ ] Add command line arguments
 - [ ] Allow customization of all fields
 - [ ] Improve documentation.

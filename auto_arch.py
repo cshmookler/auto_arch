@@ -4,7 +4,6 @@
 
 from argparse import ArgumentParser, Namespace
 import atexit
-from colorama import Fore, Style
 from signal import signal, SIGINT, SIGTERM
 import curses
 import os
@@ -18,19 +17,19 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 
 def blue(msg: str) -> str:
-    return Fore.BLUE + Style.BRIGHT + msg + Style.RESET_ALL
+    return "\033[1;34m" + msg + "\033[0m"
 
 
 def yellow(msg: str) -> str:
-    return Fore.YELLOW + Style.BRIGHT + msg + Style.RESET_ALL
+    return "\033[1;33m" + msg + "\033[0m"
 
 
 def green(msg: str) -> str:
-    return Fore.GREEN + Style.BRIGHT + msg + Style.RESET_ALL
+    return "\033[1;32m" + msg + "\033[0m"
 
 
 def red(msg: str) -> str:
-    return Fore.RED + Style.BRIGHT + msg + Style.RESET_ALL
+    return "\033[1;31m" + msg + "\033[0m"
 
 
 def error(msg: str) -> None:
@@ -585,7 +584,7 @@ if __name__ == "__main__":
     try:
         with open(root_mount + "/etc/fstab", "w") as fstab:
             fstab.write(fstab_data)
-    except os.error:
+    except:
         error("Failed to write fstab")
         quit(1)
 
