@@ -4,12 +4,13 @@
 
 from argparse import ArgumentParser, Namespace
 import atexit
-from signal import signal, SIGINT, SIGTERM
 import curses
+import json
 import os
 import shutil
+from signal import signal, SIGINT, SIGTERM
 import subprocess
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 # General utilities
@@ -32,8 +33,18 @@ def red(msg: str) -> str:
     return "\033[1;31m" + msg + "\033[0m"
 
 
+def warning(msg: str) -> None:
+    print(yellow("Warning: " + msg + "."))
+
+
 def error(msg: str) -> None:
     print(red("Error: " + msg + "."))
+
+
+def value_or(values: dict, key: Any, default_value: Any) -> str:
+    """Returns a value in a dictionary cooresponding to a given key or a default value if the key was not found in the dictionary."""
+
+    return values[key] if key in values else default_value
 
 
 def run(
@@ -442,9 +453,36 @@ if __name__ == "__main__":
 
     # Read the configuration file
     home_dir = os.path.expanduser("~")
-    local_package_conf = home_dir + "/.auto_arch_packages"
+    local_package_conf = home_dir + "/.auto_arch/packages"
+    local_profile_conf = home_dir + "/.auto_arch/profile.json"
     global_package_conf = "/etc/auto_arch/packages"
+    global_profile_conf = "/etc/auto_arch/profile.json"
 
+    packages: List[str] = [
+        "base",
+        "base-devel",
+        "linux",
+        "linux-firmware",
+        "bash",
+        "bash-completion",
+        "man-db",
+        "man-pages",
+        "cgs-limine-auto",
+        "less",
+        "curl",
+        "git",
+        "python",
+        "ufw",
+        "nano",
+        "vim",
+        "networkmanager",
+        "alsa-utils",
+        "bluez",
+        "bluez-utils",
+        "pulseaudio",
+        "pulseaudio-alsa",
+        "pulseaudio-bluetooth",
+    ]
     try:
         with open(local_package_conf, "r") as packages_file:
             packages = [line.strip() for line in packages_file]
@@ -453,25 +491,42 @@ if __name__ == "__main__":
             with open(global_package_conf, "r") as packages_file:
                 packages = [line.strip() for line in packages_file]
         except:
-            error(
+            warning(
                 "Package list not found in either "
                 + local_package_conf
                 + " or "
                 + global_package_conf
             )
-            quit(1)
+            warning("Using the default package list instead.")
+
+    profile: dict = {}
+    try:
+        with open(local_profile_conf, "r") as profile_file:
+            profile = json.load(profile_file)
+    except:
+        try:
+            with open(global_profile_conf, "r") as profile_file:
+                profile = json.load(profile_file)
+        except:
+            warning(
+                "Package profile not found in either "
+                + local_profile_conf
+                + " or "
+                + global_profile_conf
+            )
+            warning("Using the default profile instead.")
 
     interactive: bool = True
     network_install: bool = False
     min_device_size: int = int(10e9)
-    device: Optional[str] = None
-    boot_label: str = "Arch Linux"
-    time_zone: str = "America/Denver"
-    hostname: str = "arch"
-    root_password: str = "root"
-    user: str = "main"
-    user_password: str = "main"
-    sudo_group: str = "wheel"
+    device: Optional[str] = value_or(profile, "device", None)
+    boot_label: str = value_or(profile, "boot_label", "Arch Linux")
+    time_zone: str = value_or(profile, "time_zone", "America/Denver")
+    hostname: str = value_or(profile, "hostname", "arch")
+    root_password: str = value_or(profile, "root_password", "root")
+    user: str = value_or(profile, "user", "main")
+    user_password: str = value_or(profile, "user", "main")
+    sudo_group: str = value_or(profile, "sudo_group", "wheel")
 
     if not device:
         device = get_device(min_device_size)
@@ -492,7 +547,8 @@ if __name__ == "__main__":
             selection, error_msg = app.select(
                 "Select a field to change before installation:",
                 [
-                    "       device  ->  " + (device if device else "(select)"),
+                    "       device  ->  " + (device if device else ""),
+                    "   boot label  ->  " + boot_label,
                     "    time zone  ->  " + time_zone,
                     "     hostname  ->  " + hostname,
                     "root password  ->  " + root_password,
