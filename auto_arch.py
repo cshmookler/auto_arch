@@ -12,7 +12,7 @@ import subprocess
 from typing import Callable, Dict, List, Optional, Tuple
 
 
-# Utilities
+# General utilities
 # ----------------------------------------------------------------------------
 
 
@@ -36,8 +36,22 @@ def error(msg: str) -> None:
     print(red("Error: " + msg + "."))
 
 
-def run(*args, quiet: bool = True, env: Dict[str, str] | None = None) -> bool:
-    return subprocess.run(args, capture_output=quiet, env=env).returncode == 0
+def run(
+    *args,
+    input: str | None = None,
+    quiet: bool = True,
+    env: Dict[str, str] | None = None
+) -> bool:
+    return (
+        subprocess.run(
+            args,
+            capture_output=quiet,
+            env=env,
+            input=input,
+            text=True if input else None,
+        ).returncode
+        == 0
+    )
 
 
 def get(*args) -> str | None:
@@ -45,6 +59,31 @@ def get(*args) -> str | None:
     if result.returncode == 0:
         return result.stdout.decode().strip()
     return None
+
+
+def write(path: str, mode: str, text: str) -> bool:
+    try:
+        with open(path, mode) as file:
+            file.write(text)
+    except:
+        return False
+    return True
+
+
+def copy(src: str, dst: str) -> bool:
+    try:
+        shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+    except os.error:
+        return False
+    return True
+
+
+def remove(path: str) -> bool:
+    try:
+        shutil.rmtree(path)
+    except os.error:
+        return False
+    return True
 
 
 # ----------------------------------------------------------------------------
@@ -401,17 +440,32 @@ if __name__ == "__main__":
     signal(SIGINT, lambda c, _: quit(1))
     signal(SIGTERM, lambda c, _: quit(1))
 
+    # Read the configuration file
+    home_dir = os.path.expanduser("~")
+    local_package_conf = home_dir + "/.auto_arch_packages"
+    global_package_conf = "/etc/auto_arch/packages"
+
+    try:
+        with open(local_package_conf, "r") as packages_file:
+            packages = [line.strip() for line in packages_file]
+    except:
+        try:
+            with open(global_package_conf, "r") as packages_file:
+                packages = [line.strip() for line in packages_file]
+        except:
+            error(
+                "Package list not found in either "
+                + local_package_conf
+                + " or "
+                + global_package_conf
+            )
+            quit(1)
+
     interactive: bool = True
     network_install: bool = False
     min_device_size: int = int(10e9)
     device: Optional[str] = None
-    packages: List[str] = [
-        "base",
-        "base-devel",
-        "linux",
-        "linux-firmware",
-        "vim",
-    ]
+    boot_label: str = "Arch Linux"
     time_zone: str = "America/Denver"
     hostname: str = "arch"
     root_password: str = "root"
@@ -463,6 +517,9 @@ if __name__ == "__main__":
 
         # All necessary information has been collected. Installation may now begin.
         app.cleanup()
+
+        # Attempt to clear the screen after field selection is complete.
+        run("clear", quiet=False)  # Do nothing if this fails
 
     # Setup debug utilities
     cols, lines = os.get_terminal_size()
@@ -581,12 +638,41 @@ if __name__ == "__main__":
     if not fstab_data:
         error("Failed to generate fstab")
         quit(1)
-    try:
-        with open(root_mount + "/etc/fstab", "w") as fstab:
-            fstab.write(fstab_data)
-    except:
-        error("Failed to write fstab")
+    if not write(root_mount + "/etc/fstab", "w", fstab_data):
+        error("Failed to write to " + root_mount + "/etc/fstab")
         quit(1)
+
+    section("Copying this script to the root partition")
+    if not copy(__file__, root_mount + "/root/auto_arch.py"):
+        error("Failed to copy this script to " + root_mount + "/root")
+        quit(1)
+
+    section("Changing root to " + root_mount)
+    if not run(
+        "arch-chroot",
+        root_mount,
+        "python",
+        "-Bc",
+        "from auto_arch import post_pacstrap_setup\n"
+        "\n"
+        "quit(\n"
+        "    not post_pacstrap_setup(\n"
+        "        boot_part=" + boot_part + ",\n"
+        "        boot_label=" + boot_label + ",\n"
+        "        time_zone=" + time_zone + ",\n"
+        "        hostname=" + hostname + ",\n"
+        "        root_password=" + root_password + ",\n"
+        "        user=" + user + ",\n"
+        "        user_password=" + user_password + ",\n"
+        "        sudo_group=" + sudo_group + ",\n"
+        "    )\n"
+        ")",
+    ):
+        error("Failed operation while root was changed to " + root_mount)
+        quit(1)
+
+    section("Removing this script from the root partition")
+    remove(root_mount + "/root/auto_arch.py")  # Do nothing if this fails
 
     section("Unmounting all partitions on " + device)
     if not run("bash", "-ec", "umount " + device + "?*"):
@@ -597,3 +683,133 @@ if __name__ == "__main__":
     print(green("Installation complete!"))
 
     quit(0)
+
+
+def post_pacstrap_setup(
+    boot_part: str,
+    boot_label: str,
+    time_zone: str,
+    hostname: str,
+    root_password: str,
+    user: str,
+    user_password: str,
+    sudo_group: str,
+) -> bool:
+    section("Installing the boot loader")
+    if not run("auto_limine", boot_part, "--label", boot_label):
+        error("Failed to install the boot loader (Limine)")
+        return False
+
+    section("Setting the root password")
+    if not run("chpasswd", input="root:" + root_password):
+        error("Failed to set the root password")
+        # Continue installation even if this fails
+
+    section("Creating the sudo group")
+    if run("groupadd", "--force", sudo_group):
+        section("Creating the user")
+        if run(
+            "useradd",
+            "--create-home",
+            "--user-group",
+            "--groups",
+            sudo_group,
+            user,
+        ):
+            section("Setting the user password")
+            if not run("chpasswd", input=user + ":" + user_password):
+                error("Failed to set the user password")
+                # Continue installation even if this fails
+        else:
+            error("Failed to create the user")
+            # Continue installation even if this fails
+
+        section("Providing root privileges to all members of the sudo group")
+        if not write(
+            "/etc/sudoers",
+            "a",
+            "\n"
+            "## Allow members of group "
+            + sudo_group
+            + " to execute any command\n"
+            + sudo_group
+            + " ALL=(ALL:ALL) ALL\n",
+        ):
+            error(
+                "Failed to provide root privileges to all members of the sudo group"
+            )
+            # Continue installation even if this fails
+    else:
+        error("Failed to create the sudo group")
+        # Continue installation even if this fails
+
+    section("Setting time zone: " + time_zone)
+    if not run(
+        "ln",
+        "-sf",
+        "/usr/share/zoneinfo/" + time_zone,
+        "/etc/localtime",
+    ):
+        error("Failed to set time zone: " + time_zone)
+        # Continue installation even if this fails
+
+    section("Syncronizing the hardware clock with the system clock")
+    if not run("hwclock", "--systohc"):
+        error("Failed to set the hardware clock")
+        # Continue installation even if this fails
+
+    section("Syncronizing the hardware clock with the system clock")
+    if not run("hwclock", "--systohc"):
+        error("Failed to set the hardware clock")
+        # Continue installation even if this fails
+
+    section("Enabling NTP time synchronization")
+    if not run("systemctl", "enable", "systemd-timesyncd.service"):
+        error("Failed to enable the systemd-timesyncd service")
+        # Continue installation even if this fails
+
+    section("Adding locales to /etc/locale.gen")
+    if write("/etc/locale.gen", "a", "en_US.UTF-8 UTF-8"):
+        section("Generating locales")
+        if run("locale-gen"):
+            if not write("/etc/locale.conf", "w", "LANG=en_US.UTF-8"):
+                error("Failed to write locale to /etc/locale.conf")
+                # Continue installation even if this fails
+        else:
+            error("Failed to generate locales")
+            # Continue installation even if this fails
+    else:
+        error("Failed to edit /etc/locale.gen, cannot generate locales")
+        # Continue installation even if this fails
+
+    section("Setting hostname")
+    if not write("/etc/hostname", "w", hostname):
+        error("Failed to write hostname to /etc/hostname")
+        # Continue installation even if this fails
+
+    section("Enabling automatic network configuration")
+    if not run("systemctl", "enable", "NetworkManager"):
+        error("Failed to enable the NetworkManager service")
+        # Continue installation even if this fails
+
+    section("Enabling bluetooth")
+    if not run("systemctl", "enable", "bluetooth.service"):
+        error("Failed to enable bluetooth service")
+        # Continue installation even if this fails
+
+    section("Enabling the firewall")
+    if not run("systemctl", "enable", "ufw.service"):
+        error("Failed to enable the ufw service")
+        # Continue installation even if this fails
+
+    section("Enabling ssh")
+    if not run("systemctl", "enable", "sshd.service"):
+        error("Failed to enable the sshd service")
+        # Continue installation even if this fails
+
+    # section("Enabling libvirtd")
+    # if not run("systemctl", "enable", "libvirtd.service"):
+    #     error("Failed to enable the libvirtd service")
+    #     # Continue installation even if this fails
+
+    return True
