@@ -15,7 +15,8 @@ python auto_arch.py
 ## TODO
 
 - [X] Remove Python-Colorama or make it optional
-- [ ] Add command line arguments
+- [X] Add command line arguments
+- [ ] Implement configuration generation
 - [ ] Allow customization of all fields
 - [ ] Improve documentation.
 - [ ] Center the GUI on the screen

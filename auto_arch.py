@@ -2,7 +2,7 @@
 
 """Automatically installs Arch Linux"""
 
-from argparse import ArgumentParser, Namespace
+from argparse import Action, ArgumentParser, Namespace
 import atexit
 import curses
 import json
@@ -39,12 +39,6 @@ def warning(msg: str) -> None:
 
 def error(msg: str) -> None:
     print(red("Error: " + msg + "."))
-
-
-def value_or(values: dict, key: Any, default_value: Any) -> str:
-    """Returns a value in a dictionary cooresponding to a given key or a default value if the key was not found in the dictionary."""
-
-    return values[key] if key in values else default_value
 
 
 def run(
@@ -344,6 +338,10 @@ class CursesApp:
 
                 for i in range(len(items)):
                     item = items[i]
+                    if type(item) is not str:
+                        return None, "Invalid type (" + str(
+                            type(item)
+                        ) + ") for item: " + str(item)
 
                     if cursor_i == i:
                         self.win.addstr("===> ")
@@ -382,7 +380,7 @@ class CursesApp:
             except curses.error:
                 pass
 
-    def get_device(self, min_size: int) -> Optional[str]:
+    def get_device(self, min_bytes: int) -> Optional[str]:
         devices = get(
             "lsblk", "--nodeps", "--output", "path,size,rm,ro,pttype,ptuuid"
         )
@@ -407,7 +405,7 @@ class CursesApp:
 
             dev_path = dev_info_list[0]
 
-            dev_valid, error = is_device_valid(dev_path, min_size)
+            dev_valid, error = is_device_valid(dev_path, min_bytes)
             if not dev_valid:
                 return False, error
 
@@ -447,17 +445,91 @@ class CursesApp:
         return device_info[0]
 
 
+def interactive_conf(profile: dict) -> bool:
+    # Setup the interactive GUI
+    app = CursesApp()
+    if not app.good:
+        return False
+
+    while True:
+        selection, error_msg = app.select(
+            "Select a field to change before installation:",
+            [
+                " network install  ->  " + str(profile["network_install"]),
+                "min device bytes  ->  " + str(profile["min_device_bytes"]),
+                "          device  ->  "
+                + (profile["device"] if profile["device"] else ""),
+                "      boot label  ->  " + profile["boot_label"],
+                "       time zone  ->  " + profile["time_zone"],
+                "        hostname  ->  " + profile["hostname"],
+                "   root password  ->  " + profile["root_password"],
+                "            user  ->  " + profile["user"],
+                "   user password  ->  " + profile["user_password"],
+                "      sudo group  ->  " + profile["sudo_group"] + "\n",
+                "Begin Installation",
+            ],
+        )
+        if not selection:
+            return False
+
+        selection = str(selection).strip()
+        if selection.startswith("device"):
+            profile["device"] = app.get_device(profile["min_device_bytes"])
+        elif selection.startswith("Begin"):
+            if profile["device"]:
+                break
+            profile["device"] = app.get_device(profile["min_device_bytes"])
+            if device:
+                break
+
+    # All necessary information has been collected. Installation may now begin.
+    app.cleanup()
+
+    # Attempt to clear the screen after field selection is complete.
+    run("clear", quiet=False)  # Do nothing if this fails
+
+    return True
+
+
 if __name__ == "__main__":
+    # Setup signal handlers.
     signal(SIGINT, lambda c, _: quit(1))
     signal(SIGTERM, lambda c, _: quit(1))
 
-    # Read the configuration file
-    home_dir = os.path.expanduser("~")
-    local_package_conf = home_dir + "/.auto_arch/packages"
-    local_profile_conf = home_dir + "/.auto_arch/profile.json"
-    global_package_conf = "/etc/auto_arch/packages"
-    global_profile_conf = "/etc/auto_arch/profile.json"
+    # Define the help message and arguments.
+    arg_parser = ArgumentParser(
+        prog="auto_arch",
+        description="This script uses an existing Arch Linux installation to install Arch Linux on a device.",
+    )
+    arg_parser.add_argument(
+        "-g",
+        "--generate-conf",
+        dest="generate_conf",
+        help="generate an example package list and profile and exit",
+        action="store_true",
+    )
+    arg_parser.add_argument(
+        "-c",
+        "--conf-dir",
+        dest="conf_dir",
+        help="set the path to the directory containing the package list and profile",
+        action="store_true",
+    )
+    arg_parser.add_argument(
+        "-n",
+        "--non-interactive",
+        dest="non_interactive",
+        help="run this script without a GUI",
+        action="store_true",
+    )
 
+    # Parse command line arguments.
+    args: Namespace = arg_parser.parse_args()
+
+    # Determine whether this program is running in interactive mode or script mode
+    interactive: bool = not args.non_interactive
+
+    # Example package list and profile
     packages: List[str] = [
         "base",
         "base-devel",
@@ -483,99 +555,74 @@ if __name__ == "__main__":
         "pulseaudio-alsa",
         "pulseaudio-bluetooth",
     ]
-    try:
-        with open(local_package_conf, "r") as packages_file:
-            packages = [line.strip() for line in packages_file]
-    except:
+    profile: dict = {
+        "network_install": True,
+        "min_device_bytes": int(10e9),
+        "device": None,
+        "boot_label": "Arch Linux",
+        "time_zone": "America/Denver",
+        "hostname": "arch",
+        "root_password": "root",
+        "user": "main",
+        "user_password": "main",
+        "sudo_group": "wheel",
+    }
+
+    # Read the configuration files (package list and profile)
+    home_dir = os.path.expanduser("~")
+    package_list_name = "packages"
+    profile_conf_name = "profile.json"
+    package_list_default_path = home_dir + "/.auto_arch/" + package_list_name
+    profile_conf_default_path = home_dir + "/.auto_arch/" + profile_conf_name
+
+    def get_packages(packages: List[str], path: str) -> bool:
         try:
-            with open(global_package_conf, "r") as packages_file:
+            with open(path, "r") as packages_file:
                 packages = [line.strip() for line in packages_file]
+            return True
         except:
-            warning(
-                "Package list not found in either "
-                + local_package_conf
-                + " or "
-                + global_package_conf
-            )
-            warning("Using the default package list instead.")
+            return False
 
-    profile: dict = {}
-    try:
-        with open(local_profile_conf, "r") as profile_file:
-            profile = json.load(profile_file)
-    except:
+    def get_profile(profile: dict, path: str) -> bool:
         try:
-            with open(global_profile_conf, "r") as profile_file:
+            with open(path, "r") as profile_file:
                 profile = json.load(profile_file)
+            return True
         except:
-            warning(
-                "Package profile not found in either "
-                + local_profile_conf
-                + " or "
-                + global_profile_conf
-            )
-            warning("Using the default profile instead.")
+            return False
 
-    interactive: bool = True
-    network_install: bool = False
-    min_device_size: int = int(10e9)
-    device: Optional[str] = value_or(profile, "device", None)
-    boot_label: str = value_or(profile, "boot_label", "Arch Linux")
-    time_zone: str = value_or(profile, "time_zone", "America/Denver")
-    hostname: str = value_or(profile, "hostname", "arch")
-    root_password: str = value_or(profile, "root_password", "root")
-    user: str = value_or(profile, "user", "main")
-    user_password: str = value_or(profile, "user", "main")
-    sudo_group: str = value_or(profile, "sudo_group", "wheel")
+    if args.conf_dir:
+        package_list_path = args.conf_dir + "/" + package_list_name
+        if not get_packages(packages, package_list_path):
+            error("Failed to read the package list at " + package_list_path)
+            quit(1)
+        profile_conf_path = args.conf_dir + "/" + profile_conf_name
+        if not get_profile(profile, profile_conf_name):
+            error("Failed to read the profile at " + package_list_path)
+            quit(1)
+    else:
+        if not get_packages(packages, package_list_default_path):
+            warning("Package list not found at " + package_list_default_path)
+            warning("Using the default package list instead")
+        if not get_profile(profile, profile_conf_default_path):
+            warning("Package profile not found at " + profile_conf_default_path)
+            warning("Using the default profile instead")
 
-    if not device:
-        device = get_device(min_device_size)
+    if not profile["device"]:
+        device = get_device(profile["min_device_bytes"])
 
     if not interactive:
-        if not device:
+        if not profile["device"]:
             error(
                 "Failed to find a suitable device for installation. Manual intervention is required"
             )
             quit(1)
     else:
-        # Setup the interactive GUI
-        app = CursesApp()
-        if not app.good:
-            quit(1)
-
-        while True:
-            selection, error_msg = app.select(
-                "Select a field to change before installation:",
-                [
-                    "       device  ->  " + (device if device else ""),
-                    "   boot label  ->  " + boot_label,
-                    "    time zone  ->  " + time_zone,
-                    "     hostname  ->  " + hostname,
-                    "root password  ->  " + root_password,
-                    "         user  ->  " + user,
-                    "user password  ->  " + user_password,
-                    "   sudo group  ->  " + sudo_group + "\n",
-                    "Begin Installation",
-                ],
+        if not interactive_conf(profile):
+            error(
+                "An operation failed during interactive profile configuration"
             )
-            if not selection:
-                quit(1)
-
-            selection = str(selection).strip()
-            if selection.startswith("device"):
-                device = app.get_device(min_device_size)
-            elif selection.startswith("Begin"):
-                if device:
-                    break
-                device = app.get_device(min_device_size)
-                if device:
-                    break
-
-        # All necessary information has been collected. Installation may now begin.
-        app.cleanup()
-
-        # Attempt to clear the screen after field selection is complete.
-        run("clear", quiet=False)  # Do nothing if this fails
+            quit(1)
 
     # Setup debug utilities
     cols, lines = os.get_terminal_size()
@@ -594,13 +641,15 @@ if __name__ == "__main__":
     else:
         print("This system is BIOS bootable")
 
-    if get("lsblk", "--noheadings", "--output", "mountpoints", device):
-        section("Unmounting all partitions on " + device)
-        if not run("bash", "-ec", "umount " + device + "?*"):
-            error("Failed to unmount all partitions on " + device)
+    if get(
+        "lsblk", "--noheadings", "--output", "mountpoints", profile["device"]
+    ):
+        section("Unmounting all partitions on " + profile["device"])
+        if not run("bash", "-ec", "umount " + profile["device"] + "?*"):
+            error("Failed to unmount all partitions on " + profile["device"])
             quit(1)
 
-    section("Formatting and partitioning " + device)
+    section("Formatting and partitioning " + profile["device"])
     boot_part_size_megs: int = 500
     boot_part_num: int = 1
     root_part_num: int = 2
@@ -623,9 +672,9 @@ if __name__ == "__main__":
             "    echo    ;"  # start at the end of the EFI partition
             "    echo    ;"  # reserve the rest of the device
             "    echo w  ;"  # write changes
-            ") | fdisk " + device,
+            ") | fdisk " + profile["device"],
         ):
-            error("Failed to format and partition " + device)
+            error("Failed to format and partition " + profile["device"])
             quit(1)
     else:
         if not run(
@@ -647,14 +696,14 @@ if __name__ == "__main__":
             "    echo    ;"  # start at the end of the boot partition
             "    echo    ;"  # reserve the rest of the device
             "    echo w  ;"  # write changes
-            ") | fdisk " + device,
+            ") | fdisk " + profile["device"],
         ):
-            error("Failed to format and partition " + device)
+            error("Failed to format and partition " + profile["device"])
             quit(1)
 
-    section("Creating filesystems on " + device)
-    boot_part = device + str(boot_part_num)
-    root_part = device + str(root_part_num)
+    section("Creating filesystems on " + profile["device"])
+    boot_part = profile["device"] + str(boot_part_num)
+    root_part = profile["device"] + str(root_part_num)
     if not run("mkfs.fat", "-F", "32", boot_part):
         error("Failed to create a FAT32 filesystem on " + boot_part)
         quit(1)
@@ -673,7 +722,7 @@ if __name__ == "__main__":
         quit(1)
 
     section("Syncing package databases")
-    if network_install:
+    if profile["network_install"]:
         if not run(
             "pacman", "-Sy", "--noconfirm", "archlinux-keyring", quiet=False
         ):
@@ -714,13 +763,7 @@ if __name__ == "__main__":
         "quit(\n"
         "    not post_pacstrap_setup(\n"
         "        boot_part=" + boot_part + ",\n"
-        "        boot_label=" + boot_label + ",\n"
-        "        time_zone=" + time_zone + ",\n"
-        "        hostname=" + hostname + ",\n"
-        "        root_password=" + root_password + ",\n"
-        "        user=" + user + ",\n"
-        "        user_password=" + user_password + ",\n"
-        "        sudo_group=" + sudo_group + ",\n"
+        "        profile=" + str(profile) + ",\n"
         "    )\n"
         ")",
     ):
@@ -730,9 +773,9 @@ if __name__ == "__main__":
     section("Removing this script from the root partition")
     remove(root_mount + "/root/auto_arch.py")  # Do nothing if this fails
 
-    section("Unmounting all partitions on " + device)
-    if not run("bash", "-ec", "umount " + device + "?*"):
-        error("Failed to unmount all partitions on " + device)
+    section("Unmounting all partitions on " + profile["device"])
+    if not run("bash", "-ec", "umount " + profile["device"] + "?*"):
+        error("Failed to unmount all partitions on " + profile["device"])
         quit(1)
 
     sep()
@@ -742,38 +785,35 @@ if __name__ == "__main__":
 
 
 def post_pacstrap_setup(
+    profile: dict,
     boot_part: str,
-    boot_label: str,
-    time_zone: str,
-    hostname: str,
-    root_password: str,
-    user: str,
-    user_password: str,
-    sudo_group: str,
 ) -> bool:
     section("Installing the boot loader")
-    if not run("auto_limine", boot_part, "--label", boot_label):
+    if not run("auto_limine", boot_part, "--label", profile["boot_label"]):
         error("Failed to install the boot loader (Limine)")
         return False
 
     section("Setting the root password")
-    if not run("chpasswd", input="root:" + root_password):
+    if not run("chpasswd", input="root:" + profile["root_password"]):
         error("Failed to set the root password")
         # Continue installation even if this fails
 
     section("Creating the sudo group")
-    if run("groupadd", "--force", sudo_group):
+    if run("groupadd", "--force", profile["sudo_group"]):
         section("Creating the user")
         if run(
             "useradd",
             "--create-home",
             "--user-group",
             "--groups",
-            sudo_group,
-            user,
+            profile["sudo_group"],
+            profile["user"],
         ):
             section("Setting the user password")
-            if not run("chpasswd", input=user + ":" + user_password):
+            if not run(
+                "chpasswd",
+                input=profile["user"] + ":" + profile["user_password"],
+            ):
                 error("Failed to set the user password")
                 # Continue installation even if this fails
         else:
@@ -786,9 +826,9 @@ def post_pacstrap_setup(
             "a",
             "\n"
             "## Allow members of group "
-            + sudo_group
+            + profile["sudo_group"]
             + " to execute any command\n"
-            + sudo_group
+            + profile["sudo_group"]
             + " ALL=(ALL:ALL) ALL\n",
         ):
             error(
@@ -799,14 +839,14 @@ def post_pacstrap_setup(
         error("Failed to create the sudo group")
         # Continue installation even if this fails
 
-    section("Setting time zone: " + time_zone)
+    section("Setting time zone: " + profile["time_zone"])
     if not run(
         "ln",
         "-sf",
-        "/usr/share/zoneinfo/" + time_zone,
+        "/usr/share/zoneinfo/" + profile["time_zone"],
         "/etc/localtime",
     ):
-        error("Failed to set time zone: " + time_zone)
+        error("Failed to set time zone: " + profile["time_zone"])
         # Continue installation even if this fails
 
     section("Syncronizing the hardware clock with the system clock")
@@ -839,7 +879,7 @@ def post_pacstrap_setup(
         # Continue installation even if this fails
 
     section("Setting hostname")
-    if not write("/etc/hostname", "w", hostname):
+    if not write("/etc/hostname", "w", profile["hostname"]):
         error("Failed to write hostname to /etc/hostname")
         # Continue installation even if this fails
 
