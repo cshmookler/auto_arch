@@ -1,15 +1,15 @@
-# auto_arch
+# auto_moos
 
-Automatically installs Arch Linux on a device.
+Automatically installs [MOOS](https://github.com/cshmookler/moos) on a device.
 
 ## Usage
 
-Open a shell in an existing Arch Linux installation (or live ISO).
+Open a shell in an existing MOOS installation (or live ISO).
 
-As root, execute the "auto_arch.py" script with Python.
+As root, execute the "auto_moos.py" script with Python.
 
 ```bash
-python auto_arch.py
+python auto_moos.py
 ```
 
 ## TODO

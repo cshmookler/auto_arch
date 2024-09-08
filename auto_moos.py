@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-"""Automatically installs Arch Linux"""
+"""Automatically installs MOOS"""
 
 from argparse import Action, ArgumentParser, Namespace
 import atexit
@@ -364,9 +364,9 @@ class Profile:
     network_install = Field(True, bool)
     min_device_bytes = Field(int(10e9), int, validator=Field.numeric_validator)
     device = Field(None, Optional[str])
-    boot_label = Field("Arch Linux", str, validator=Field.boot_label_validator)
+    boot_label = Field("MOOS", str, validator=Field.boot_label_validator)
     time_zone = Field("America/Denver", str)
-    hostname = Field("arch", str, validator=Field.hostname_validator)
+    hostname = Field("moos", str, validator=Field.hostname_validator)
     root_password = Field("root", str, validator=Field.password_validator)
     username = Field("main", str, validator=Field.name_validator)
     user_password = Field("main", str, validator=Field.password_validator)
@@ -867,8 +867,8 @@ if __name__ == "__main__":
 
     # Define the help message and arguments.
     arg_parser = ArgumentParser(
-        prog="auto_arch",
-        description="This script uses an existing Arch Linux installation to install Arch Linux on a device.",
+        prog="auto_moos",
+        description="This script uses an existing MOOS installation to install MOOS on a device.",
     )
     arg_parser.add_argument(
         "-g",
@@ -946,7 +946,7 @@ if __name__ == "__main__":
         else:
             conf_dir = home_dir + args.conf_dir
     else:
-        conf_dir = home_dir + "/.auto_arch"
+        conf_dir = home_dir + "/.auto_moos"
 
     # Create the log file (if enabled)
     if args.log_file:
@@ -959,11 +959,8 @@ if __name__ == "__main__":
         except:
             error("Failed to create the log file")
 
-    package_list_name = "packages"
-    profile_name = "profile.json"
-    conf_dir = args.conf_dir if args.conf_dir else home_dir + "/.auto_arch"
-    package_list_path = conf_dir + "/" + package_list_name
-    profile_path = conf_dir + "/" + profile_name
+    package_list_path = conf_dir + "/packages"
+    profile_path = conf_dir + "/profile.json"
 
     if args.generate_conf:
         # Ensure that this operation does not overwrite existing files
@@ -1135,7 +1132,7 @@ if __name__ == "__main__":
         quit(1)
 
     section("Copying this script to the root partition")
-    if not copy(__file__, root_mount + "/root/auto_arch.py"):
+    if not copy(__file__, root_mount + "/root/auto_moos.py"):
         error("Failed to copy this script to " + root_mount + "/root")
         quit(1)
 
@@ -1145,7 +1142,7 @@ if __name__ == "__main__":
         root_mount,
         "python",
         "-Bc",
-        "from auto_arch import post_pacstrap_setup\n"
+        "from auto_moos import post_pacstrap_setup\n"
         "\n"
         "quit(\n"
         "    not post_pacstrap_setup(\n"
@@ -1158,7 +1155,7 @@ if __name__ == "__main__":
         quit(1)
 
     section("Removing this script from the root partition")
-    remove(root_mount + "/root/auto_arch.py")  # Do nothing if this fails
+    remove(root_mount + "/root/auto_moos.py")  # Do nothing if this fails
 
     section("Unmounting all partitions on " + profile.device.get_str())
     if not run("bash", "-ec", "umount " + profile.device.get_str() + "?*"):
