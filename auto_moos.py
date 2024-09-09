@@ -125,8 +125,12 @@ class Logger:
     def verbose(self, msg: str) -> None:
         self._put("[Verbose] " + msg + ".", Level.verbose)
 
-    def set_log_file(self, path: str) -> None:
-        self._log_file = open(make_absolute(path), "w")
+    def set_log_file(self, path: str) -> bool:
+        try:
+            self._log_file = open(path, "w")
+            return True
+        except:
+            return False
 
     def set_log_level(self, level: Level) -> None:
         self._level = level
@@ -935,23 +939,15 @@ def main() -> bool:
 
     # Ensure that the path to the configuration directory is absolute.
     if args.conf_dir:
-        if os.path.isabs(args.conf_dir):
-            conf_dir = args.conf_dir
-        else:
-            conf_dir = home_dir + args.conf_dir
+        conf_dir = make_absolute(args.conf_dir)
     else:
         conf_dir = home_dir + "/.auto_moos"
 
-    # Create the log file (if enabled)
+    # Enable writing to a given log file (if enabled)
     if args.log_file:
-        if os.path.isabs(args.log_file):
-            log_file_path = args.log_file
-        else:
-            log_file_path = home_dir + "/" + args.log_file
-        try:
-            log_file = open(log_file_path, "w")
-        except:
-            logger.error("Failed to create the log file")
+        log_file_path = make_absolute(args.log_file)
+        if not logger.set_log_file(log_file_path):
+            logger.error("Failed to open the log file at " + log_file_path)
 
     package_list_path = conf_dir + "/packages"
     profile_path = conf_dir + "/profile.json"
