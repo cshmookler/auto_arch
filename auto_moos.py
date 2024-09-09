@@ -101,6 +101,7 @@ class Logger:
         atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
+        self.show_as_ansi()
         if self._log_file is not None:
             self._log_file.close()
 
@@ -418,7 +419,7 @@ class Field:
 
 @dataclass
 class Profile:
-    network_install: Field = Field(True, bool)
+    network_install: Field = Field(False, bool)
     min_device_bytes: Field = Field(
         int(10e9), int, validator=Field.numeric_validator
     )
@@ -440,6 +441,25 @@ class Profile:
             field.name: getattr(self, field.name).get()
             for field in fields(self)
         }
+
+
+def dict_to_profile(profile_dict: dict) -> Profile:
+    profile = Profile()
+    for key, value in profile_dict.items():
+        if hasattr(profile, key):
+            field: Field = getattr(profile, key)
+            if not field.set(value):
+                logger.warning(
+                    "The given value is invalid for the cooresponding field:"
+                    + "\n\tfield: "
+                    + key
+                    + "\n\tvalue: "
+                    + value
+                )
+            setattr(profile, key, field)
+        else:
+            logger.warning("Unrecognized field in profile: " + key)
+    return profile
 
 
 def dump_packages(packages: List[str], path: str) -> bool:
@@ -475,22 +495,7 @@ def load_profile(path: str) -> Optional[Profile]:
     profile = Profile()
     try:
         with open(path, "r") as profile_file:
-            json_profile = json.load(profile_file)
-            for key, value in json_profile.items():
-                if hasattr(profile, key):
-                    field: Field = getattr(profile, key)
-                    if not field.set(value):
-                        logger.warning(
-                            "The given value is invalid for the cooresponding field:"
-                            + "\n\tfield: "
-                            + key
-                            + "\n\tvalue: "
-                            + value
-                        )
-                    setattr(profile, key, field)
-                else:
-                    logger.warning("Unrecognized field in profile: " + key)
-        return profile
+            return dict_to_profile(json.load(profile_file))
     except:
         logger.error("Failed to read the profile from " + path)
         return None
@@ -1126,14 +1131,15 @@ def main() -> bool:
         root_mount,
         "python",
         "-Bc",
-        "from auto_moos import post_pacstrap_setup\n"
+        "from auto_moos import show_errors_and_quit, post_pacstrap_setup\n"
         "\n"
-        "quit(\n"
-        "    not post_pacstrap_setup(\n"
-        "        boot_part=" + boot_part + ",\n"
-        "        profile=" + str(profile) + ",\n"
+        "show_errors_and_quit(\n"
+        "    post_pacstrap_setup(\n"
+        "        profile_dict=" + str(profile.to_dict()) + ",\n"
+        "        boot_part='" + boot_part + "',\n"
         "    )\n"
         ")",
+        quiet=False,
     ):
         logger.error("Failed operation while root was changed to " + root_mount)
         return False
@@ -1160,9 +1166,11 @@ def show_errors_and_quit(status: bool) -> None:
 
 
 def post_pacstrap_setup(
-    profile: Profile,
+    profile_dict: dict,
     boot_part: str,
 ) -> bool:
+    profile = dict_to_profile(profile_dict)
+
     # Setup debug utilities
     cols, lines = os.get_terminal_size()
 
