@@ -5,7 +5,7 @@
 from argparse import Action, ArgumentParser, Namespace
 import atexit
 import curses
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, fields
 from enum import Enum, IntEnum, auto
 import json
 import os
@@ -316,12 +316,6 @@ def get_device(min_size: int) -> Optional[str]:
     return None
 
 
-def is_uefi_bootable() -> bool:
-    """Determine whether this system is UEFI bootable or not"""
-
-    return os.path.exists("/sys/firmware/efi/fw_platform_size")
-
-
 class Field:
     @staticmethod
     def default_validator(_: str) -> bool:
@@ -424,16 +418,28 @@ class Field:
 
 @dataclass
 class Profile:
-    network_install = Field(True, bool)
-    min_device_bytes = Field(int(10e9), int, validator=Field.numeric_validator)
-    device = Field(None, Optional[str])
-    boot_label = Field("MOOS", str, validator=Field.boot_label_validator)
-    time_zone = Field("America/Denver", str)
-    hostname = Field("moos", str, validator=Field.hostname_validator)
-    root_password = Field("root", str, validator=Field.password_validator)
-    username = Field("main", str, validator=Field.name_validator)
-    user_password = Field("main", str, validator=Field.password_validator)
-    sudo_group = Field("wheel", str, validator=Field.name_validator)
+    network_install: Field = Field(True, bool)
+    min_device_bytes: Field = Field(
+        int(10e9), int, validator=Field.numeric_validator
+    )
+    device: Field = Field(None, Optional[str])
+    boot_label: Field = Field("MOOS", str, validator=Field.boot_label_validator)
+    time_zone: Field = Field("America/Denver", str)
+    hostname: Field = Field("moos", str, validator=Field.hostname_validator)
+    root_password: Field = Field(
+        "root", str, validator=Field.password_validator
+    )
+    username: Field = Field("main", str, validator=Field.name_validator)
+    user_password: Field = Field(
+        "main", str, validator=Field.password_validator
+    )
+    sudo_group: Field = Field("wheel", str, validator=Field.name_validator)
+
+    def to_dict(self) -> dict:
+        return {
+            field.name: getattr(self, field.name).get()
+            for field in fields(self)
+        }
 
 
 def dump_packages(packages: List[str], path: str) -> bool:
@@ -456,14 +462,9 @@ def load_packages(path: str) -> Optional[List[str]]:
 
 
 def dump_profile(profile: Profile, path: str) -> bool:
-    json_profile = {}
-    key: str
-    value: Field
-    for key, value in asdict(profile).items():
-        json_profile[key] = value.get()
     try:
         with open(path, "w") as profile_file:
-            json.dump(json_profile, profile_file, indent=4)
+            json.dump(profile.to_dict(), profile_file, indent=4)
         return True
     except:
         logger.error("Failed to write the profile to " + path)
@@ -956,16 +957,12 @@ def main() -> bool:
         # Ensure that this operation does not overwrite existing files
         if os.path.exists(package_list_path):
             logger.error(
-                "A package list already exists at the default location: "
-                + package_list_path
+                "A package list already exists at " + package_list_path
             )
             return False
 
         if os.path.exists(profile_path):
-            logger.error(
-                "A profile already exists at the default location: "
-                + profile_path
-            )
+            logger.error("A profile already exists at " + profile_path)
             return False
 
         # Make the configuration directory if it does not already exist
@@ -1027,13 +1024,6 @@ def main() -> bool:
     def section(msg: str) -> None:
         sep()
         print(msg + "...")
-
-    section("Identifying supported boot modes")
-    uefi = is_uefi_bootable()
-    if uefi:
-        print("This system is UEFI bootable")
-    else:
-        print("This system is BIOS bootable")
 
     if get(
         "lsblk",
