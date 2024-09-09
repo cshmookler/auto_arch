@@ -16,77 +16,9 @@ import subprocess
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
-# Initialize the global log queue.
-log = Queue()
-log_file: Any = None
-
-
-# Message reporting and processing utilities
-# ----------------------------------------------------------------------------
-
-
-class Message_Level(Enum):
-    success = auto()
-    error = auto()
-    warning = auto()
-    info = auto()
-    verbose = auto()
-
-
-@dataclass
-class Message:
-    raw: str
-    level: Message_Level
-
-
-def success(msg: str) -> None:
-    log.put(Message(msg, Message_Level.success), block=False)
-
-
-def error(msg: str) -> None:
-    log.put(Message("  [Error] " + msg + ".", Message_Level.error), block=False)
-
-
-def warning(msg: str) -> None:
-    log.put(
-        Message("[Warning] " + msg + ".", Message_Level.warning), block=False
-    )
-
-
-def info(msg: str) -> None:
-    log.put(Message("   [Info] " + msg + ".", Message_Level.info), block=False)
-
-
-def verbose(msg: str) -> None:
-    log.put(
-        Message("[Verbose] " + msg + ".", Message_Level.verbose), block=False
-    )
-
-
-def green(msg: str) -> str:
-    return "\033[1;32m" + msg + "\033[0m"
-
-
-def red(msg: str) -> str:
-    return "\033[1;31m" + msg + "\033[0m"
-
-
-def yellow(msg: str) -> str:
-    return "\033[1;33m" + msg + "\033[0m"
-
-
-def blue(msg: str) -> str:
-    return "\033[1;34m" + msg + "\033[0m"
-
-
-def get_next_log() -> Optional[Message]:
-    try:
-        msg: Message = log.get_nowait()
-    except:
-        return None
-    if log_file is not None:
-        log_file.write(msg.raw + "\n")
-    return msg
+# Global paths.
+this_dir = os.path.dirname(__file__)
+home_dir = os.path.expanduser("~")
 
 
 # Subprocess and filesystem utilities
@@ -128,19 +60,144 @@ def write(path: str, mode: str, text: str) -> bool:
 
 
 def copy(src: str, dst: str) -> bool:
-    try:
-        shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
-    except os.error:
-        return False
-    return True
+    return run("cp", "-r", src, dst)
 
 
 def remove(path: str) -> bool:
-    try:
-        shutil.rmtree(path)
-    except os.error:
-        return False
-    return True
+    return run("rm", "-rf", path)
+
+
+def make_absolute(path: str) -> str:
+    if os.path.isabs(path):
+        return path
+    else:
+        return this_dir + "/" + path
+
+
+# Message reporting and processing utilities
+# ----------------------------------------------------------------------------
+
+
+class Level(IntEnum):
+    normal = auto()
+    success = auto()
+    error = auto()
+    warning = auto()
+    info = auto()
+    verbose = auto()
+
+
+@dataclass
+class Message:
+    raw: str
+    level: Level
+
+
+class Logger:
+    def __init__(self, level: Level) -> None:
+        self._log = Queue()
+        self._level = level
+        self._log_file = None
+        atexit.register(self.cleanup)
+
+    def cleanup(self) -> None:
+        if self._log_file is not None:
+            self._log_file.close()
+
+    def _put(self, msg: str, level: Level) -> None:
+        self._log.put(Message(msg, level), block=False)
+
+    def normal(self, msg: str) -> None:
+        self._put(msg, Level.normal)
+
+    def success(self, msg: str) -> None:
+        self._put(msg, Level.success)
+
+    def error(self, msg: str) -> None:
+        self._put("  [Error] " + msg + ".", Level.error)
+
+    def warning(self, msg: str) -> None:
+        self._put("[Warning] " + msg + ".", Level.warning)
+
+    def info(self, msg: str) -> None:
+        self._put("   [Info] " + msg + ".", Level.info)
+
+    def verbose(self, msg: str) -> None:
+        self._put("[Verbose] " + msg + ".", Level.verbose)
+
+    def set_log_file(self, path: str) -> None:
+        self._log_file = open(make_absolute(path), "w")
+
+    def set_log_level(self, level: Level) -> None:
+        self._level = level
+
+    def _get_next(self) -> Optional[Message]:
+        try:
+            msg: Message = self._log.get_nowait()
+        except:
+            return None
+        if self._log_file is not None:
+            self._log_file.write(msg.raw + "\n")
+        return msg
+
+    @staticmethod
+    def _green(msg: str) -> str:
+        return "\033[1;32m" + msg + "\033[0m"
+
+    @staticmethod
+    def _red(msg: str) -> str:
+        return "\033[1;31m" + msg + "\033[0m"
+
+    @staticmethod
+    def _yellow(msg: str) -> str:
+        return "\033[1;33m" + msg + "\033[0m"
+
+    @staticmethod
+    def _blue(msg: str) -> str:
+        return "\033[1;34m" + msg + "\033[0m"
+
+    def show_as_ansi(self) -> None:
+        while not self._log.empty():
+            msg: Optional[Message] = self._get_next()
+            if msg is None:
+                break
+            if msg.level > self._level:
+                break
+
+            if msg.level == Level.normal:
+                print(msg.raw)
+            elif msg.level == Level.success:
+                print(Logger._green(msg.raw))
+            elif msg.level == Level.error:
+                print(Logger._red(msg.raw))
+            elif msg.level == Level.warning:
+                print(Logger._yellow(msg.raw))
+            elif msg.level == Level.info:
+                print(Logger._blue(msg.raw))
+            elif msg.level == Level.verbose:
+                print(msg.raw)
+            else:
+                print("[Unknown] " + msg.raw)
+
+    def show_as_curses(
+        self,
+        color_setter: Callable[[Level], None],
+        writer: Callable[[str], None],
+    ) -> None:
+        while not self._log.empty():
+            msg: Optional[Message] = self._get_next()
+            if msg is None:
+                break
+            if msg.level > self._level:
+                break
+
+            color_setter(msg.level)
+            writer(msg.raw + "\n")
+            color_setter(Level.normal)
+
+
+# The global logger object.
+logger = Logger(Level.verbose)
 
 
 # ----------------------------------------------------------------------------
@@ -155,7 +212,7 @@ def list_all_devices() -> Optional[List[str]]:
         "path",
     )
     if not devices:
-        error("Failed to get device information from lsblk")
+        logger.error("Failed to get device information from lsblk")
         return None
 
     return str(devices).splitlines()
@@ -172,7 +229,7 @@ def is_device_valid(dev_path: str, min_dev_bytes: int) -> bool:
         dev_path,
     )
     if not dev_info:
-        error(
+        logger.error(
             "Failed to get device information from lsblk for device: "
             + dev_path
         )
@@ -180,11 +237,11 @@ def is_device_valid(dev_path: str, min_dev_bytes: int) -> bool:
 
     dev_info = str(dev_info).split()
     if len(dev_info) <= 1:
-        error("Not enough fields given by lsblk for device: " + dev_path)
+        logger.error("Not enough fields given by lsblk for device: " + dev_path)
         return False
 
     if dev_path != dev_info[0]:
-        error(
+        logger.error(
             "Wrong device given by lsblk."
             + "\nExpected: "
             + dev_path
@@ -196,7 +253,7 @@ def is_device_valid(dev_path: str, min_dev_bytes: int) -> bool:
     dev_size = dev_info[1]
 
     if int(dev_size) < min_dev_bytes:
-        error(
+        logger.error(
             "Not enough space on device: "
             + dev_path
             + "\n   Minimum required: "
@@ -214,12 +271,14 @@ def is_device_valid(dev_path: str, min_dev_bytes: int) -> bool:
 def device_lacks_partitions(dev_path: str) -> Optional[bool]:
     parts = get("lsblk", "--noheadings", "--output", "path", dev_path)
     if not parts:
-        error("Failed to use lsblk to list partitions on device: " + dev_path)
+        logger.error(
+            "Failed to use lsblk to list partitions on device: " + dev_path
+        )
         return None
 
     parts = str(parts).splitlines()[1:]
     if len(parts) > 0:
-        warning("Partitions found on device: " + dev_path)
+        logger.warning("Partitions found on device: " + dev_path)
         return False
 
     return True
@@ -230,19 +289,19 @@ def get_device(min_size: int) -> Optional[str]:
 
     devices = list_all_devices()
     if not devices:
-        error("Failed to list devices")
+        logger.error("Failed to list devices")
         return None
 
     for dev_path in devices:
         if not is_device_valid(dev_path, min_size):
-            info(
+            logger.info(
                 "The minimum requirements for installation were not met by device: "
                 + dev_path
             )
             continue
 
         if not device_lacks_partitions(dev_path):
-            info(
+            logger.info(
                 "Formatting a device that already contains partitions will result in irreversible data loss!"
                 "\n\t\tExplicit permission (via interactive mode) is required to format a device with existing partitions"
             )
@@ -267,17 +326,17 @@ class Field:
     @staticmethod
     def numeric_validator(value: str) -> bool:
         if not value.isnumeric():
-            error("The given value is not numeric: " + value)
+            logger.error("The given value is not numeric: " + value)
             return False
         return True
 
     @staticmethod
     def boot_label_validator(value: str) -> bool:
         if not value:
-            error("Boot labels must contain at least one character")
+            logger.error("Boot labels must contain at least one character")
             return False
         if not (value.isprintable() and value.isascii()):
-            error(
+            logger.error(
                 "Boot labels cannot contain non-printable or non-ascii characters"
             )
             return False
@@ -286,16 +345,16 @@ class Field:
     @staticmethod
     def hostname_validator(value: str) -> bool:
         if not value:
-            error("Hostnames must contain at least one character")
+            logger.error("Hostnames must contain at least one character")
             return False
         if len(value) > 64:
-            error("Hostnames cannot be longer than 64 characters")
+            logger.error("Hostnames cannot be longer than 64 characters")
             return False
         if not (
             value.replace("-", "").islower()
             and value.replace("-", "").isalnum()
         ):
-            error(
+            logger.error(
                 "Hostnames may only contain lowercase letters, numbers, and hyphens"
             )
             return False
@@ -304,19 +363,19 @@ class Field:
     @staticmethod
     def name_validator(value: str) -> bool:
         if not value:
-            error("Names must contain at least one character")
+            logger.error("Names must contain at least one character")
             return False
         if value.isnumeric():
-            error("Names cannot be entirely numeric")
+            logger.error("Names cannot be entirely numeric")
             return False
         if value.startswith("-"):
-            error("Names cannot start with a hyphen")
+            logger.error("Names cannot start with a hyphen")
             return False
         if len(value) > 32:
-            error("Names cannot be longer than 32 characters")
+            logger.error("Names cannot be longer than 32 characters")
             return False
         if not value.replace("-", "").replace("_", "").isalnum():
-            error(
+            logger.error(
                 "Names may only contain letters, numbers, underscores, and hyphens"
             )
             return False
@@ -325,10 +384,10 @@ class Field:
     @staticmethod
     def password_validator(value: str) -> bool:
         if not value:
-            error("Passwords must contain at least one character")
+            logger.error("Passwords must contain at least one character")
             return False
         if not (value.isprintable() and value.isascii()):
-            error(
+            logger.error(
                 "Passwords cannot contain non-printable or non-ascii characters"
             )
             return False
@@ -379,7 +438,7 @@ def dump_packages(packages: List[str], path: str) -> bool:
             packages_file.write("\n".join(packages))
         return True
     except:
-        error("Failed to write the package list to " + path)
+        logger.error("Failed to write the package list to " + path)
         return False
 
 
@@ -388,7 +447,7 @@ def load_packages(path: str) -> Optional[List[str]]:
         with open(path, "r") as packages_file:
             return [line.strip() for line in packages_file]
     except:
-        error("Failed to read the package list from " + path)
+        logger.error("Failed to read the package list from " + path)
         return None
 
 
@@ -403,7 +462,7 @@ def dump_profile(profile: Profile, path: str) -> bool:
             json.dump(json_profile, profile_file, indent=4)
         return True
     except:
-        error("Failed to write the profile to " + path)
+        logger.error("Failed to write the profile to " + path)
         return False
 
 
@@ -416,7 +475,7 @@ def load_profile(path: str) -> Optional[Profile]:
                 if hasattr(profile, key):
                     field: Field = getattr(profile, key)
                     if not field.set(value):
-                        warning(
+                        logger.warning(
                             "The given value is invalid for the cooresponding field:"
                             + "\n\tfield: "
                             + key
@@ -425,10 +484,10 @@ def load_profile(path: str) -> Optional[Profile]:
                         )
                     setattr(profile, key, field)
                 else:
-                    warning("Unrecognized field in profile: " + key)
+                    logger.warning("Unrecognized field in profile: " + key)
         return profile
     except:
-        error("Failed to read the profile from " + path)
+        logger.error("Failed to read the profile from " + path)
         return None
 
 
@@ -439,44 +498,20 @@ class CursesApp:
     def _show_cursor(self) -> None:
         curses.curs_set(1)  # Show the cursor
 
-    class ColorIndex(IntEnum):
-        normal = auto()
-        highlight = auto()
-        success = auto()
-        error = auto()
-        warning = auto()
-        info = auto()
-        verbose = auto()
-
     def _init_colors(self) -> None:
         curses.start_color()
+        curses.init_pair(Level.normal, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        curses.init_pair(Level.success, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(Level.error, curses.COLOR_RED, curses.COLOR_BLACK)
         curses.init_pair(
-            CursesApp.ColorIndex.normal, curses.COLOR_WHITE, curses.COLOR_BLACK
-        )
-        curses.init_pair(
-            CursesApp.ColorIndex.highlight,
-            curses.COLOR_BLACK,
-            curses.COLOR_WHITE,
-        )
-        curses.init_pair(
-            CursesApp.ColorIndex.success, curses.COLOR_GREEN, curses.COLOR_BLACK
-        )
-        curses.init_pair(
-            CursesApp.ColorIndex.error, curses.COLOR_RED, curses.COLOR_BLACK
-        )
-        curses.init_pair(
-            CursesApp.ColorIndex.warning,
+            Level.warning,
             curses.COLOR_YELLOW,
             curses.COLOR_BLACK,
         )
-        curses.init_pair(
-            CursesApp.ColorIndex.info, curses.COLOR_CYAN, curses.COLOR_BLACK
-        )
-        curses.init_pair(
-            CursesApp.ColorIndex.verbose, curses.COLOR_WHITE, curses.COLOR_BLACK
-        )
+        curses.init_pair(Level.info, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(Level.verbose, curses.COLOR_WHITE, curses.COLOR_BLACK)
 
-    def _set_color(self, color: ColorIndex, window=None) -> None:
+    def _set_color(self, color: Level, window=None) -> None:
         if not window:
             window = self.win
         window.bkgdset(curses.color_pair(color))
@@ -494,7 +529,7 @@ class CursesApp:
 
         # Setup colors
         self._init_colors()
-        self._set_color(CursesApp.ColorIndex.normal, window=self.screen)
+        self._set_color(Level.normal, window=self.screen)
 
         # Edit terminal settings
         curses.noecho()  # Do not echo key presses
@@ -515,7 +550,9 @@ class CursesApp:
         self.max_border_cols = 10
         if curses.LINES < self.min_lines or curses.COLS < self.min_cols:
             self.cleanup()
-            error("Min dim: " + str(self.min_lines) + "x" + str(self.min_cols))
+            logger.error(
+                "Min dim: " + str(self.min_lines) + "x" + str(self.min_cols)
+            )
             return
 
         # Get the size and position of the window
@@ -584,7 +621,7 @@ class CursesApp:
         validator: Callable[[str], bool] = Field.default_validator,
     ) -> Optional[int]:
         if len(items) <= 0:
-            error("Not enough items given to select from")
+            logger.error("Not enough items given to select from")
             return None
 
         while True:
@@ -598,7 +635,7 @@ class CursesApp:
                 for this_index in range(len(items)):
                     item = items[this_index]
                     if type(item) is not str:
-                        error(
+                        logger.error(
                             "The given item is not a string:"
                             "\n\ttype: "
                             + str(type(item))
@@ -615,22 +652,7 @@ class CursesApp:
                     self.win.addstr(item + "\n")
 
                 self.win.addstr("\n")
-                while not log.empty():
-                    msg: Optional[Message] = get_next_log()
-                    if msg is None:
-                        break
-                    if msg.level == Message_Level.success:
-                        self._set_color(CursesApp.ColorIndex.success)
-                    elif msg.level == Message_Level.error:
-                        self._set_color(CursesApp.ColorIndex.error)
-                    elif msg.level == Message_Level.warning:
-                        self._set_color(CursesApp.ColorIndex.warning)
-                    elif msg.level == Message_Level.info:
-                        self._set_color(CursesApp.ColorIndex.info)
-                    elif msg.level == Message_Level.verbose:
-                        self._set_color(CursesApp.ColorIndex.verbose)
-                    self.win.addstr(msg.raw + "\n")
-                    self._set_color(CursesApp.ColorIndex.normal)
+                logger.show_as_curses(self._set_color, self.win.addstr)
 
                 self.win.refresh()
 
@@ -691,12 +713,12 @@ class CursesApp:
             "lsblk", "--nodeps", "--output", "path,size,rm,ro,pttype,ptuuid"
         )
         if not devices:
-            error("Failed to get device information from lsblk")
+            logger.error("Failed to get device information from lsblk")
             return None
 
         devices = str(devices).splitlines()
         if len(devices) <= 1:
-            error("Not enough devices listed")
+            logger.error("Not enough devices listed")
             return None
 
         device_headings = devices[0]
@@ -705,13 +727,13 @@ class CursesApp:
         def interactive_device_validator(dev_info: str) -> bool:
             dev_info_list = dev_info.split()
             if len(dev_info_list) <= 0:
-                error("Missing path field")
+                logger.error("Missing path field")
                 return False
 
             dev_path = dev_info_list[0]
 
             if not is_device_valid(dev_path, min_bytes):
-                error(
+                logger.error(
                     "The selected device does not meet the minimum requirements for installation"
                 )
                 return False
@@ -736,12 +758,12 @@ class CursesApp:
             validator=interactive_device_validator,
         )
         if selection_index is None:
-            error("Failed to select a device")
+            logger.error("Failed to select a device")
             return None
 
         device_info = devices[selection_index].split()
         if len(device_info) <= 0:
-            error("Missing path for device: " + devices[selection_index])
+            logger.error("Missing path for device: " + devices[selection_index])
             return None
 
         return device_info[0]
@@ -749,7 +771,7 @@ class CursesApp:
     def get_time_zone(self) -> Optional[str]:
         timezones_str = get("timedatectl", "list-timezones", "--no-pager")
         if not timezones_str:
-            error("Failed to get the list of timezones from timedatectl")
+            logger.error("Failed to get the list of timezones from timedatectl")
             return None
 
         timezones_list = timezones_str.splitlines()
@@ -758,7 +780,7 @@ class CursesApp:
             "Select the new timezone:", timezones_list
         )
         if selection_index is None:
-            error("Failed to select a timezone")
+            logger.error("Failed to select a timezone")
             return None
 
         return timezones_list[selection_index]
@@ -860,10 +882,10 @@ def interactive_conf(profile: Profile) -> Optional[Profile]:
     return profile
 
 
-if __name__ == "__main__":
+def main() -> bool:
     # Setup signal handlers.
-    signal(SIGINT, lambda c, _: quit(1))
-    signal(SIGTERM, lambda c, _: quit(1))
+    signal(SIGINT, lambda c, _: show_errors_and_quit(status=False))
+    signal(SIGTERM, lambda c, _: show_errors_and_quit(status=False))
 
     # Define the help message and arguments.
     arg_parser = ArgumentParser(
@@ -903,41 +925,13 @@ if __name__ == "__main__":
     args: Namespace = arg_parser.parse_args()
 
     # Declare the default package list.
-    packages: List[str] = [
-        "base",
-        "base-devel",
-        "linux",
-        "linux-firmware",
-        "bash",
-        "bash-completion",
-        "man-db",
-        "man-pages",
-        "cgs-auto-limine",
-        "less",
-        "curl",
-        "git",
-        "python",
-        "ufw",
-        "nano",
-        "vim",
-        "networkmanager",
-        "alsa-utils",
-        "bluez",
-        "bluez-utils",
-        "pulseaudio",
-        "pulseaudio-alsa",
-        "pulseaudio-bluetooth",
-    ]
+    packages: List[str] = ["moos"]
 
     # Declare the default profile.
     profile = Profile()
 
     # Determine whether this program is running in interactive mode or script mode.
     interactive: bool = not args.non_interactive
-
-    # Define paths.
-    this_dir = os.path.dirname(__file__)
-    home_dir = os.path.expanduser("~")
 
     # Ensure that the path to the configuration directory is absolute.
     if args.conf_dir:
@@ -957,7 +951,7 @@ if __name__ == "__main__":
         try:
             log_file = open(log_file_path, "w")
         except:
-            error("Failed to create the log file")
+            logger.error("Failed to create the log file")
 
     package_list_path = conf_dir + "/packages"
     profile_path = conf_dir + "/profile.json"
@@ -965,18 +959,18 @@ if __name__ == "__main__":
     if args.generate_conf:
         # Ensure that this operation does not overwrite existing files
         if os.path.exists(package_list_path):
-            error(
+            logger.error(
                 "A package list already exists at the default location: "
                 + package_list_path
             )
-            quit(1)
+            return False
 
         if os.path.exists(profile_path):
-            error(
+            logger.error(
                 "A profile already exists at the default location: "
                 + profile_path
             )
-            quit(1)
+            return False
 
         # Make the configuration directory if it does not already exist
         if not os.path.exists(conf_dir):
@@ -984,15 +978,17 @@ if __name__ == "__main__":
 
         # Generate example packages
         if not dump_packages(packages, package_list_path):
-            error(
+            logger.error(
                 "Failed to write an example package list to "
                 + package_list_path
             )
-            quit(1)
+            return False
 
         if not dump_profile(profile, profile_path):
-            error("Failed to write an example profile to " + profile_path)
-            quit(1)
+            logger.error(
+                "Failed to write an example profile to " + profile_path
+            )
+            return False
 
         quit(0)
 
@@ -1014,17 +1010,17 @@ if __name__ == "__main__":
     if interactive:
         profile = interactive_conf(profile)
         if not profile:
-            error(
+            logger.error(
                 "An operation failed during interactive profile configuration"
             )
-            quit(1)
+            return False
 
     # If a device still hasn't been selected, cancel installation.
     if profile.device.get() is None:
-        error(
+        logger.error(
             "Failed to find a suitable device for installation. Manual intervention is required"
         )
-        quit(1)
+        return False
 
     # Setup debug utilities
     cols, lines = os.get_terminal_size()
@@ -1052,11 +1048,11 @@ if __name__ == "__main__":
     ):
         section("Unmounting all partitions on " + profile.device.get_str())
         if not run("bash", "-ec", "umount " + profile.device.get_str() + "?*"):
-            error(
+            logger.error(
                 "Failed to unmount all partitions on "
                 + profile.device.get_str()
             )
-            quit(1)
+            return False
 
     section("Formatting and partitioning " + profile.device.get_str())
     boot_part_size_megs: int = 500
@@ -1082,59 +1078,61 @@ if __name__ == "__main__":
         "    echo w  ;"  # write changes
         ") | fdisk " + profile.device.get_str(),
     ):
-        error("Failed to format and partition " + profile.device.get_str())
-        quit(1)
+        logger.error(
+            "Failed to format and partition " + profile.device.get_str()
+        )
+        return False
 
     section("Creating filesystems on " + profile.device.get_str())
     boot_part = profile.device.get_str() + str(boot_part_num)
     root_part = profile.device.get_str() + str(root_part_num)
     if not run("mkfs.fat", "-F", "32", boot_part):
-        error("Failed to create a FAT32 filesystem on " + boot_part)
-        quit(1)
+        logger.error("Failed to create a FAT32 filesystem on " + boot_part)
+        return False
     if not run("mkfs.ext4", root_part):
-        error("Failed to create an EXT4 filesystem on " + root_part)
-        quit(1)
+        logger.error("Failed to create an EXT4 filesystem on " + root_part)
+        return False
 
     section("Mounting filesystems")
     root_mount = "/mnt"
     boot_mount = "/mnt/boot"
     if not run("mount", "--mkdir", root_part, root_mount):
-        error("Failed to mount " + root_part + " to " + root_mount)
-        quit(1)
+        logger.error("Failed to mount " + root_part + " to " + root_mount)
+        return False
     if not run("mount", "--mkdir", boot_part, boot_mount):
-        error("Failed to mount " + boot_part + " to " + boot_mount)
-        quit(1)
+        logger.error("Failed to mount " + boot_part + " to " + boot_mount)
+        return False
 
     section("Syncing package databases")
     if profile.network_install.get():
         if not run(
             "pacman", "-Sy", "--noconfirm", "archlinux-keyring", quiet=False
         ):
-            error("Failed to sync package databases")
-            quit(1)
+            logger.error("Failed to sync package databases")
+            return False
     else:
         if not run("pacman", "-Sy", quiet=False):
-            error("Failed to sync package databases")
-            quit(1)
+            logger.error("Failed to sync package databases")
+            return False
 
     section("Installing packages with pacstrap")
     if not run("pacstrap", "-K", root_mount, *packages, quiet=False):
-        error("Failed to install essential packages")
-        quit(1)
+        logger.error("Failed to install essential packages")
+        return False
 
     section("Generating fstab")
     fstab_data = get("genfstab", "-U", root_mount)
     if not fstab_data:
-        error("Failed to generate fstab")
-        quit(1)
+        logger.error("Failed to generate fstab")
+        return False
     if not write(root_mount + "/etc/fstab", "w", fstab_data):
-        error("Failed to write to " + root_mount + "/etc/fstab")
-        quit(1)
+        logger.error("Failed to write to " + root_mount + "/etc/fstab")
+        return False
 
     section("Copying this script to the root partition")
     if not copy(__file__, root_mount + "/root/auto_moos.py"):
-        error("Failed to copy this script to " + root_mount + "/root")
-        quit(1)
+        logger.error("Failed to copy this script to " + root_mount + "/root")
+        return False
 
     section("Changing root to " + root_mount)
     if not run(
@@ -1151,37 +1149,54 @@ if __name__ == "__main__":
         "    )\n"
         ")",
     ):
-        error("Failed operation while root was changed to " + root_mount)
-        quit(1)
+        logger.error("Failed operation while root was changed to " + root_mount)
+        return False
 
     section("Removing this script from the root partition")
     remove(root_mount + "/root/auto_moos.py")  # Do nothing if this fails
 
     section("Unmounting all partitions on " + profile.device.get_str())
     if not run("bash", "-ec", "umount " + profile.device.get_str() + "?*"):
-        error("Failed to unmount all partitions on " + profile.device.get_str())
-        quit(1)
+        logger.error(
+            "Failed to unmount all partitions on " + profile.device.get_str()
+        )
+        return False
 
     sep()
-    print(green("Installation complete!"))
+    print(Logger._green("Installation complete!"))
 
-    quit(0)
+    return True
+
+
+def show_errors_and_quit(status: bool) -> None:
+    logger.show_as_ansi()
+    quit(not status)
 
 
 def post_pacstrap_setup(
     profile: Profile,
     boot_part: str,
 ) -> bool:
+    # Setup debug utilities
+    cols, lines = os.get_terminal_size()
+
+    def sep() -> None:
+        print("-" * cols)
+
+    def section(msg: str) -> None:
+        sep()
+        print(msg + "...")
+
     section("Installing the boot loader")
     if not run(
         "auto_limine", boot_part, "--label", profile.boot_label.get_str()
     ):
-        error("Failed to install the boot loader (Limine)")
+        logger.error("Failed to install the boot loader (Limine)")
         return False
 
     section("Setting the root password")
     if not run("chpasswd", input="root:" + profile.root_password.get_str()):
-        error("Failed to set the root password")
+        logger.error("Failed to set the root password")
         # Continue installation even if this fails
 
     section("Creating the sudo group")
@@ -1202,10 +1217,10 @@ def post_pacstrap_setup(
                 + ":"
                 + profile.user_password.get_str(),
             ):
-                error("Failed to set the user password")
+                logger.error("Failed to set the user password")
                 # Continue installation even if this fails
         else:
-            error("Failed to create the user")
+            logger.error("Failed to create the user")
             # Continue installation even if this fails
 
         section("Providing root privileges to all members of the sudo group")
@@ -1219,12 +1234,12 @@ def post_pacstrap_setup(
             + profile.sudo_group.get_str()
             + " ALL=(ALL:ALL) ALL\n",
         ):
-            error(
+            logger.error(
                 "Failed to provide root privileges to all members of the sudo group"
             )
             # Continue installation even if this fails
     else:
-        error("Failed to create the sudo group")
+        logger.error("Failed to create the sudo group")
         # Continue installation even if this fails
 
     section("Setting time zone: " + profile.time_zone.get_str())
@@ -1234,22 +1249,22 @@ def post_pacstrap_setup(
         "/usr/share/zoneinfo/" + profile.time_zone.get_str(),
         "/etc/localtime",
     ):
-        error("Failed to set time zone: " + profile.time_zone.get_str())
+        logger.error("Failed to set time zone: " + profile.time_zone.get_str())
         # Continue installation even if this fails
 
     section("Syncronizing the hardware clock with the system clock")
     if not run("hwclock", "--systohc"):
-        error("Failed to set the hardware clock")
+        logger.error("Failed to set the hardware clock")
         # Continue installation even if this fails
 
     section("Syncronizing the hardware clock with the system clock")
     if not run("hwclock", "--systohc"):
-        error("Failed to set the hardware clock")
+        logger.error("Failed to set the hardware clock")
         # Continue installation even if this fails
 
     section("Enabling NTP time synchronization")
     if not run("systemctl", "enable", "systemd-timesyncd.service"):
-        error("Failed to enable the systemd-timesyncd service")
+        logger.error("Failed to enable the systemd-timesyncd service")
         # Continue installation even if this fails
 
     section("Adding locales to /etc/locale.gen")
@@ -1257,43 +1272,47 @@ def post_pacstrap_setup(
         section("Generating locales")
         if run("locale-gen"):
             if not write("/etc/locale.conf", "w", "LANG=en_US.UTF-8"):
-                error("Failed to write locale to /etc/locale.conf")
+                logger.error("Failed to write locale to /etc/locale.conf")
                 # Continue installation even if this fails
         else:
-            error("Failed to generate locales")
+            logger.error("Failed to generate locales")
             # Continue installation even if this fails
     else:
-        error("Failed to edit /etc/locale.gen, cannot generate locales")
+        logger.error("Failed to edit /etc/locale.gen, cannot generate locales")
         # Continue installation even if this fails
 
     section("Setting hostname")
     if not write("/etc/hostname", "w", profile.hostname.get_str()):
-        error("Failed to write hostname to /etc/hostname")
+        logger.error("Failed to write hostname to /etc/hostname")
         # Continue installation even if this fails
 
     section("Enabling automatic network configuration")
     if not run("systemctl", "enable", "NetworkManager"):
-        error("Failed to enable the NetworkManager service")
+        logger.error("Failed to enable the NetworkManager service")
         # Continue installation even if this fails
 
     section("Enabling bluetooth")
     if not run("systemctl", "enable", "bluetooth.service"):
-        error("Failed to enable bluetooth service")
+        logger.error("Failed to enable bluetooth service")
         # Continue installation even if this fails
 
     section("Enabling the firewall")
     if not run("systemctl", "enable", "ufw.service"):
-        error("Failed to enable the ufw service")
+        logger.error("Failed to enable the ufw service")
         # Continue installation even if this fails
 
     section("Enabling ssh")
     if not run("systemctl", "enable", "sshd.service"):
-        error("Failed to enable the sshd service")
+        logger.error("Failed to enable the sshd service")
         # Continue installation even if this fails
 
     # section("Enabling libvirtd")
     # if not run("systemctl", "enable", "libvirtd.service"):
-    #     error("Failed to enable the libvirtd service")
+    #     logger.error("Failed to enable the libvirtd service")
     #     # Continue installation even if this fails
 
     return True
+
+
+if __name__ == "__main__":
+    show_errors_and_quit(main())
