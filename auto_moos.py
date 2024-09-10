@@ -13,6 +13,7 @@ from queue import Queue, Empty
 import shutil
 from signal import signal, SIGINT, SIGTERM
 import subprocess
+from time import sleep
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
@@ -435,6 +436,7 @@ class Profile:
         "main", str, validator=Field.password_validator
     )
     sudo_group: Field = Field("wheel", str, validator=Field.name_validator)
+    restart: Field = Field(True, bool)
 
     def to_dict(self) -> dict:
         return {
@@ -818,7 +820,8 @@ def interactive_conf(profile: Profile) -> Optional[Profile]:
                 "   root password  ->  " + profile.root_password.get_str(),
                 "        username  ->  " + profile.username.get_str(),
                 "   user password  ->  " + profile.user_password.get_str(),
-                "      sudo group  ->  " + profile.sudo_group.get_str() + "\n",
+                "      sudo group  ->  " + profile.sudo_group.get_str(),
+                "         restart  ->  " + profile.restart.get_str() + "\n",
                 "Begin Installation",
             ],
             cursor_index=cursor_index,
@@ -876,7 +879,17 @@ def interactive_conf(profile: Profile) -> Optional[Profile]:
                 profile.sudo_group,
                 "Enter the new name for the sudo group:",
             )
-        elif cursor_index == 10:  # Begin Installation
+        elif cursor_index == 10:  # restart
+            selection_index = app.select(
+                "Enable restart after installation?",
+                [
+                    "No. Do not restart once installation is complete.",
+                    "Yes. Restart once installation is complete.",
+                ],
+            )
+            if selection_index is not None:
+                profile.restart.set(bool(selection_index))
+        elif cursor_index == 11:  # Begin Installation
             if profile.device.get() is not None:
                 break
             profile.device.set(app.get_device(profile.min_device_bytes.get()))
@@ -920,7 +933,7 @@ def main() -> bool:
         "-l",
         "--log-file",
         dest="log_file",
-        help="write logs to a given file",
+        help="set the path to the log file",
         action="store",
     )
     arg_parser.add_argument(
@@ -943,17 +956,20 @@ def main() -> bool:
     # Determine whether this program is running in interactive mode or script mode.
     interactive: bool = not args.non_interactive
 
-    # Ensure that the path to the configuration directory is absolute.
+    # Set the path to the configuration directory.
     if args.conf_dir:
         conf_dir = make_absolute(args.conf_dir)
     else:
         conf_dir = home_dir + "/.auto_moos"
 
-    # Enable writing to a given log file (if enabled)
+    # Enable writing to the log file.
     if args.log_file:
         log_file_path = make_absolute(args.log_file)
-        if not logger.set_log_file(log_file_path):
-            logger.error("Failed to open the log file at " + log_file_path)
+    else:
+        log_file_path = home_dir + "/.auto_moos_log"
+    if not logger.set_log_file(log_file_path):
+        logger.error("Failed to open the log file at " + log_file_path)
+        return False
 
     package_list_path = conf_dir + "/packages"
     profile_path = conf_dir + "/profile.json"
@@ -1121,7 +1137,7 @@ def main() -> bool:
         return False
 
     section("Copying this script to the root partition")
-    if not copy(__file__, root_mount + "/root/auto_moos.py"):
+    if not copy(__file__, root_mount + "/auto_moos.py"):
         logger.error("Failed to copy this script to " + root_mount + "/root")
         return False
 
@@ -1145,7 +1161,7 @@ def main() -> bool:
         return False
 
     section("Removing this script from the root partition")
-    remove(root_mount + "/root/auto_moos.py")  # Do nothing if this fails
+    remove(root_mount + "/auto_moos.py")  # Do nothing if this fails
 
     section("Unmounting all partitions on " + profile.device.get_str())
     if not run("bash", "-ec", "umount " + profile.device.get_str() + "?*"):
@@ -1156,6 +1172,21 @@ def main() -> bool:
 
     sep()
     print(Logger._green("Installation complete!"))
+
+    sep()
+    print("Messages accumulated during installation: ")
+    logger.show_as_ansi()
+
+    restart_timeout: int = 10
+    if profile.restart:
+        sep()
+        print("All logs will be stored to " + log_file_path + ".")
+        print("Type CTRL-C to cancel the restart.")
+        for i in range(restart_timeout):
+            sleep(1)
+            print("Restarting in " + str(restart_timeout - i) + "...")
+
+        run("shutdown", "-r", "now")
 
     return True
 
@@ -1244,11 +1275,6 @@ def post_pacstrap_setup(
         "/etc/localtime",
     ):
         logger.error("Failed to set time zone: " + profile.time_zone.get_str())
-        # Continue installation even if this fails
-
-    section("Syncronizing the hardware clock with the system clock")
-    if not run("hwclock", "--systohc"):
-        logger.error("Failed to set the hardware clock")
         # Continue installation even if this fails
 
     section("Syncronizing the hardware clock with the system clock")
