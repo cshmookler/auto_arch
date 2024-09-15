@@ -45,7 +45,7 @@ def run(
 
 
 def get(*args) -> str | None:
-    result = subprocess.run(args, capture_output=True)
+    result = subprocess.run(*args, capture_output=True)
     if result.returncode == 0:
         return result.stdout.decode().strip()
     return None
@@ -1245,6 +1245,20 @@ def post_pacstrap_setup(
                 + profile.user_password.get_str(),
             ):
                 logger.error("Failed to set the user password")
+                # Continue installation even if this fails
+
+            section("Creating the user environment")
+            if not run(
+                "rsync",
+                "--archive",
+                "--chown="
+                + profile.username.get_str()
+                + ":"
+                + profile.username.get_str(),
+                "/etc/user_env/",
+                "/home/" + profile.username.get_str(),
+            ):
+                logger.error("Failed to create the user environment")
                 # Continue installation even if this fails
         else:
             logger.error("Failed to create the user")
