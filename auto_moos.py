@@ -102,7 +102,7 @@ class Logger:
         atexit.register(self.cleanup)
 
     def cleanup(self) -> None:
-        self.show_as_ansi()
+        self.show_all_as_ansi()
         if self._log_file is not None:
             self._log_file.close()
 
@@ -162,30 +162,33 @@ class Logger:
     def _blue(msg: str) -> str:
         return "\033[1;34m" + msg + "\033[0m"
 
-    def show_as_ansi(self) -> None:
+    @staticmethod
+    def _as_ansi(msg: str, level: Level) -> str:
+        if level == Level.normal:
+            return msg
+        if level == Level.success:
+            return Logger._green(msg)
+        if level == Level.error:
+            return Logger._red(msg)
+        if level == Level.warning:
+            return Logger._yellow(msg)
+        if level == Level.info:
+            return Logger._blue(msg)
+        if level == Level.verbose:
+            return msg
+
+        return "[Unknown] " + msg
+
+    def show_all_as_ansi(self) -> None:
         while not self._log.empty():
             msg: Optional[Message] = self._get_next()
             if msg is None:
                 break
             if msg.level > self._level:
                 break
+            print(Logger._as_ansi(msg.raw, msg.level))
 
-            if msg.level == Level.normal:
-                print(msg.raw)
-            elif msg.level == Level.success:
-                print(Logger._green(msg.raw))
-            elif msg.level == Level.error:
-                print(Logger._red(msg.raw))
-            elif msg.level == Level.warning:
-                print(Logger._yellow(msg.raw))
-            elif msg.level == Level.info:
-                print(Logger._blue(msg.raw))
-            elif msg.level == Level.verbose:
-                print(msg.raw)
-            else:
-                print("[Unknown] " + msg.raw)
-
-    def show_as_curses(
+    def show_all_as_curses(
         self,
         color_setter: Callable[[Level], None],
         writer: Callable[[str], None],
@@ -664,7 +667,7 @@ class CursesApp:
                     self.win.addstr(item + "\n")
 
                 self.win.addstr("\n")
-                logger.show_as_curses(self._set_color, self.win.addstr)
+                logger.show_all_as_curses(self._set_color, self.win.addstr)
 
                 self.win.refresh()
 
@@ -1170,12 +1173,11 @@ def main() -> bool:
         )
         return False
 
-    sep()
-    print(Logger._green("Installation complete!"))
+    logger.success("Installation complete!")
 
     sep()
     print("Messages accumulated during installation: ")
-    logger.show_as_ansi()
+    logger.show_all_as_ansi()
 
     restart_timeout: int = 10
     if profile.restart:
@@ -1192,7 +1194,7 @@ def main() -> bool:
 
 
 def show_errors_and_quit(status: bool) -> None:
-    logger.show_as_ansi()
+    logger.show_all_as_ansi()
     quit(not status)
 
 
@@ -1255,7 +1257,7 @@ def post_pacstrap_setup(
             "\n"
             "## Allow members of group "
             + profile.sudo_group.get_str()
-            + " to execute any command\n"
+            + " to execute any command\n%"
             + profile.sudo_group.get_str()
             + " ALL=(ALL:ALL) ALL\n",
         ):
