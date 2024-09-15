@@ -45,7 +45,7 @@ def run(
 
 
 def get(*args) -> str | None:
-    result = subprocess.run(*args, capture_output=True)
+    result = subprocess.run(args, capture_output=True)
     if result.returncode == 0:
         return result.stdout.decode().strip()
     return None
