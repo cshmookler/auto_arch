@@ -368,6 +368,9 @@ class Field:
         if not value:
             logger.error("Names must contain at least one character")
             return False
+        if value == "root":
+            logger.error("The name 'root' is reserved")
+            return False
         if value.isnumeric():
             logger.error("Names cannot be entirely numeric")
             return False
@@ -1249,14 +1252,10 @@ def post_pacstrap_setup(
 
             section("Creating the user environment")
             if not run(
-                "rsync",
-                "--archive",
-                "--chown="
-                + profile.username.get_str()
-                + ":"
-                + profile.username.get_str(),
-                "/etc/user_env/",
-                "/home/" + profile.username.get_str(),
+                "sudo",
+                "-u",
+                profile.username.get_str(),
+                "update_user_env",
             ):
                 logger.error("Failed to create the user environment")
                 # Continue installation even if this fails
