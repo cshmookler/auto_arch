@@ -1255,7 +1255,7 @@ def post_pacstrap_setup(
                 "sudo",
                 "-u",
                 profile.username.get_str(),
-                "update_user_env",
+                "reset_user_env",
             ):
                 logger.error("Failed to create the user environment")
                 # Continue installation even if this fails
@@ -1303,7 +1303,7 @@ def post_pacstrap_setup(
         # Continue installation even if this fails
 
     section("Adding locales to /etc/locale.gen")
-    if write("/etc/locale.gen", "a", "en_US.UTF-8 UTF-8"):
+    if write("/etc/locale.gen", "a", "en_US.UTF-8 UTF-8\n"):
         section("Generating locales")
         if run("locale-gen"):
             if not write("/etc/locale.conf", "w", "LANG=en_US.UTF-8"):
@@ -1339,6 +1339,12 @@ def post_pacstrap_setup(
     section("Enabling ssh")
     if not run("systemctl", "enable", "sshd.service"):
         logger.error("Failed to enable the sshd service")
+        # Continue installation even if this fails
+
+    section("Enabling the backlight service for special_keys")
+    if not run("systemctl", "enable", "special-keys-backlight
+.service"):
+        logger.error("Failed to enable the special_keys backlight service")
         # Continue installation even if this fails
 
     # section("Enabling libvirtd")
