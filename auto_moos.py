@@ -1352,6 +1352,11 @@ def post_pacstrap_setup(
     #     logger.error("Failed to enable the libvirtd service")
     #     # Continue installation even if this fails
 
+    section("Creating global policies for Firefox")
+    if not run("reset_firefox_policies"):
+        logger.error("Failed to create global policies for Firefox")
+        # Continue installation even if this fails
+
     return True
 
 
